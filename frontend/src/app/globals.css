@@ -1,28 +1,55 @@
 @import "tailwindcss";
 
-:root {
-  --background: #0f172a;
-  --foreground: #f1f5f9;
-}
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-border-dim: var(--border-dim);
+  --color-primary-glow: var(--primary-glow);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+:root {
+  --background: #06090e; /* 더 깊은 어두운 색 (Palantir 느낌) */
+  --foreground: #c9d1d9;
+  --surface: #0d1117;
+  --border-dim: #30363d;
+  --primary-glow: rgba(56, 189, 248, 0.4); /* Tailwind sky-400/40 */
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #06090e;
+    --foreground: #c9d1d9;
   }
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  margin: 0;
+  padding: 0;
+}
+
+/* 커스텀 스크롤바 디자인 */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-dim);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8b949e;
 }
 
 .scrollbar-hide {
@@ -31,4 +58,36 @@ body {
 }
 .scrollbar-hide::-webkit-scrollbar {
   display: none; /* Chrome/Safari */
+}
+
+/* CRT 모니터 스캔라인 효과 */
+.crt-overlay::before {
+  content: " ";
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%,
+    rgba(0, 0, 0, 0.25) 50%
+  );
+  background-size: 100% 4px;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0.15;
+}
+
+/* 미세한 모니터 깜빡임 효과 (선택적 사용) */
+@keyframes flicker {
+  0% { opacity: 0.98; }
+  5% { opacity: 0.95; }
+  10% { opacity: 0.99; }
+  15% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+.crt-flicker {
+  animation: flicker 0.15s infinite;
 }
