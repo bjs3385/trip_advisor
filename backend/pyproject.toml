@@ -1,0 +1,38 @@
+[project]
+name = "trip-advisor-backend"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "django>=5.0",
+    "psycopg[binary]>=3.0",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0",
+    "ruff>=0.9",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "DJ",  # flake8-django
+    "UP",  # pyupgrade
+]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["config"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
