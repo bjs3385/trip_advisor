@@ -30,6 +30,8 @@ static/
 .env
 .env.*
 !.env.example
+!.env.local.example
+frontend/.env.local
 
 # IDEs
 .idea/
