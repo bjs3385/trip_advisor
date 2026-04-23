@@ -44,78 +44,9 @@ export interface TripState {
 
 // --- Mock Data (Adapted from tripData.js) ---
 
-const PUBLIC_BASECAMP_COORDINATES = { lat: 37.8586, lng: -120.2142 };
+export const MOCK_FAMILIES: Family[] = [];
 
-export const MOCK_FAMILIES: Family[] = [
-  {
-    id: 'north-star',
-    name: 'Parkers',
-    origin: 'Los Angeles',
-    shortOrigin: 'LA',
-    status: 'Transit',
-    eta: 'Thu 4:00 PM',
-    driveTime: '5.5 hrs',
-    headcount: '2 adults, 1 kid',
-    vehicle: 'SUV',
-    responsibility: 'Firewood + snacks',
-    readiness: 82,
-    routeSummary: 'Single-leg drive from LA to Pine Mountain Lake',
-    checklist: [
-      { id: 'car-pack', label: 'Car packed night before', done: true },
-      { id: 'kid-bag', label: 'Kid activity bag loaded', done: true },
-      { id: 'groceries', label: 'Road snacks secured', done: false },
-      { id: 'firewood', label: 'Pickup firewood on arrival', done: false },
-    ],
-  },
-  {
-    id: 'silver-peak',
-    name: 'Jiangs',
-    origin: 'San Francisco',
-    shortOrigin: 'SF',
-    status: 'Transit',
-    eta: 'Thu 4:00 PM',
-    driveTime: '3.5 hrs',
-    headcount: '2 adults, 1 kid',
-    vehicle: 'SUV',
-    responsibility: 'Coolers + breakfast fruit',
-    readiness: 88,
-    routeSummary: 'Short Bay Area drive with a quick Oakdale reset before Pine Mountain Lake',
-    checklist: [
-      { id: 'lake-gear', label: 'Lake towels and floaties', done: true },
-      { id: 'breakfast', label: 'Breakfast fruit packed', done: true },
-      { id: 'kids-shoes', label: 'Backup shoes for kid', done: false },
-      { id: 'charger', label: 'Portable charger packed', done: true },
-    ],
-  },
-  {
-    id: 'desert-bloom',
-    name: 'Riveras',
-    origin: 'Reno',
-    shortOrigin: 'RN',
-    status: 'Friday Arrival',
-    eta: 'Fri 1:00 PM',
-    driveTime: '5 hrs',
-    headcount: '2 adults, 1 kid',
-    vehicle: 'SUV',
-    responsibility: 'Grill kit + Saturday lunch',
-    readiness: 71,
-    routeSummary: 'Friday arrival from Reno straight into Pine Mountain Lake',
-    checklist: [
-      { id: 'late-arrival', label: 'Friday arrival window confirmed', done: true },
-      { id: 'grill-kit', label: 'Grill kit packed', done: false },
-      { id: 'yosemite-daypack', label: 'Yosemite daypacks staged', done: false },
-      { id: 'park-pass', label: 'Park entry docs confirmed', done: true },
-    ],
-  },
-];
-
-export const MOCK_POINTS: MapPoint[] = [
-  { id: 'sf-silver-peak', label: 'Jiangs', caption: 'San Francisco', familyId: 'silver-peak', focusDay: 'thursday', tone: 'critical', position: { lat: 37.7855, lng: -122.4068 } },
-  { id: 'sf-desert-bloom', label: 'Riveras', caption: 'Reno', familyId: 'desert-bloom', focusDay: 'friday', tone: 'violet', position: { lat: 39.5296, lng: -119.8138 } },
-  { id: 'la-north-star', label: 'Parkers', caption: 'Los Angeles', familyId: 'north-star', focusDay: 'thursday', tone: 'warning', position: { lat: 34.0522, lng: -118.2437 } },
-  { id: 'pine-mountain-lake', label: 'Basecamp', caption: 'Pine Mountain Lake', familyId: 'all', focusDay: 'all', tone: 'success', position: PUBLIC_BASECAMP_COORDINATES },
-  { id: 'yosemite', label: 'Yosemite', caption: 'Primary target', familyId: 'all', focusDay: 'saturday', tone: 'muted', position: { lat: 37.8651, lng: -119.5383 } },
-];
+export const MOCK_POINTS: MapPoint[] = [];
 
 // --- Zustand Store ---
 

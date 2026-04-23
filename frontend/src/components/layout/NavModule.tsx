@@ -34,7 +34,7 @@ export function NavModule(_: NavModuleProps) {
   const setActiveTab = useItineraryStore((s) => s.setActiveTab);
   const activeDay  = useItineraryStore((s) => s.activeDay);
   const itinerary  = useItineraryStore((s) => s.itinerary);
-  const day = itinerary[activeDay] ?? itinerary[1];
+  const day = itinerary[activeDay] ?? itinerary[1] ?? { locations: [], routes: [], budget: [] };
 
   return (
     <FloatPanel delay={0.1}>

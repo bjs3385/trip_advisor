@@ -13,11 +13,22 @@ export type SelectedLocation = {
   locationId: string;
 } | null;
 
-// ─── 초기 도시 목록 (간트 표시 순서) ──────────────────────────────────────────
-const INITIAL_CITIES = ["TOKYO", "KYOTO", "OSAKA", "NARA"] as const;
+// ─── 검색 → 지도 트리거 ──────────────────────────────────────────────────────
+// SearchModule이 set, MapView가 watch해서 pan + PoiPopup 오픈 후 clear
+export type SearchTarget = {
+  position: { lat: number; lng: number };
+  placeId: string;
+  name: string;
+  address?: string;
+  type?: string;
+  rating?: number;
+} | null;
 
-// 초기 시작일 (데이터 상 첫 일자 04.28)
-const INITIAL_START_DATE = "2026-04-28";
+// ─── 초기 도시 목록 (간트 표시 순서) ──────────────────────────────────────────
+const INITIAL_CITIES: string[] = [];
+
+// 초기 시작일
+const INITIAL_START_DATE = "2026-04-23";
 
 // 기본 하루 데이터
 const EMPTY_DAY: ItineraryDay = { locations: [], routes: [], budget: [] };
@@ -59,12 +70,14 @@ type ItineraryState = {
   activeTab: "locations" | "routes" | "budget";
   selectedLocation: SelectedLocation;
   selectedMapCity: string | null;
+  searchTarget: SearchTarget;
 
   // UI 액션
   setActiveDay: (day: number) => void;
   setActiveTab: (tab: "locations" | "routes" | "budget") => void;
   setSelectedLocation: (sel: SelectedLocation) => void;
   setSelectedMapCity: (city: string | null) => void;
+  setSearchTarget: (target: SearchTarget) => void;
 
   // 장소 액션
   updateLocation: (day: number, updated: LocationEntry) => void;
@@ -93,11 +106,13 @@ export const useItineraryStore = create<ItineraryState>((set) => ({
   activeTab: "locations",
   selectedLocation: null,
   selectedMapCity: null,
+  searchTarget: null,
 
   setActiveDay: (day) => set({ activeDay: day }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setSelectedLocation: (sel) => set({ selectedLocation: sel, selectedMapCity: null }),
   setSelectedMapCity: (city) => set({ selectedMapCity: city, selectedLocation: null }),
+  setSearchTarget: (target) => set({ searchTarget: target }),
 
   updateLocation: (day, updated) =>
     set((state) => ({
@@ -140,14 +155,19 @@ export const useItineraryStore = create<ItineraryState>((set) => ({
       const lastDay = state.days[state.days.length - 1];
       const nextDayNum = (lastDay?.day ?? 0) + 1;
       const year = parseIso(state.startDate)?.getFullYear() ?? new Date().getFullYear();
+      const city = patch?.city ?? lastDay?.city ?? state.cities[0] ?? "";
       const newEntry: DayEntry = {
         day: nextDayNum,
         label: patch?.label ?? nextDateLabel(lastDay?.label, year),
-        city: patch?.city ?? lastDay?.city ?? state.cities[0] ?? "TOKYO",
+        city,
         note: patch?.note ?? "",
       };
+      const nextCities = city && !state.cities.includes(city)
+        ? [...state.cities, city]
+        : state.cities;
       return {
         days: [...state.days, newEntry],
+        cities: nextCities,
         itinerary: { ...state.itinerary, [nextDayNum]: EMPTY_DAY },
       };
     }),
@@ -171,9 +191,13 @@ export const useItineraryStore = create<ItineraryState>((set) => ({
     }),
 
   updateDay: (day, patch) =>
-    set((state) => ({
-      days: state.days.map((d) => (d.day === day ? { ...d, ...patch } : d)),
-    })),
+    set((state) => {
+      const days = state.days.map((d) => (d.day === day ? { ...d, ...patch } : d));
+      const nextCities = patch.city && !state.cities.includes(patch.city)
+        ? [...state.cities, patch.city]
+        : state.cities;
+      return { days, cities: nextCities };
+    }),
 
   setStartDate: (iso) =>
     set((state) => {
@@ -197,9 +221,9 @@ export const useItineraryStore = create<ItineraryState>((set) => ({
 
   removeCity: (name) =>
     set((state) => {
-      // 해당 도시를 쓰는 일자가 있으면 기본 도시로 이동
+      // 해당 도시를 쓰는 일자가 있으면 남은 도시로 이동, 없으면 빈 값
       const key = name;
-      const fallback = state.cities.find((c) => c !== key) ?? "TOKYO";
+      const fallback = state.cities.find((c) => c !== key) ?? "";
       const updatedDays = state.days.map((d) =>
         d.city === key ? { ...d, city: fallback } : d
       );

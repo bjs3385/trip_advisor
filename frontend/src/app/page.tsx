@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useJsApiLoader } from "@react-google-maps/api";
 import MapView from "@/components/map/MapView";
 import { NavModule, PropertiesModule, TimelineModule } from "@/components/layout/ControlPanels";
+import { SearchModule } from "@/components/layout/SearchModule";
 
 export type ActiveTab = "locations" | "routes" | "budget";
 
@@ -45,8 +46,9 @@ export default function Home() {
         <PropertiesModule selectedNode={selectedNode} />
       </div>
 
-      {/* 하단 중앙 — 타임라인 모듈 */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-[min(720px,calc(100vw-2rem))]">
+      {/* 하단 중앙 — 검색 + 타임라인 모듈 */}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-[min(720px,calc(100vw-2rem))] flex flex-col gap-2">
+        <SearchModule isLoaded={isLoaded} />
         <TimelineModule />
       </div>
     </div>
