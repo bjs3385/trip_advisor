@@ -1,5 +1,6 @@
 // ─── 타입 정의 ────────────────────────────────────────────────────────────────
-export type LocationCategory = "HOTEL" | "SIGHT" | "FOOD" | "TRANSIT";
+export type LocationCategory = "HOTEL" | "SIGHT" | "FOOD" | "TRANSIT" | "WALK";
+export type TransitRole = "DEPARTURE" | "ARRIVAL";
 
 export type DayEntry = {
   day: number;
@@ -12,8 +13,25 @@ export type LocationEntry = {
   id: string;
   name: string;
   category: LocationCategory;
+  transitRole?: TransitRole;
   time: string;
+  endTime?: string;
+  groupId?: string;
+  areaId?: string;
   position?: { lat: number; lng: number };
+  shapeVertices?: { lat: number; lng: number }[];
+  entryPoint?: { lat: number; lng: number };
+  exitPoint?: { lat: number; lng: number };
+};
+
+export type MapAreaEntry = {
+  id: string;
+  name: string;
+  position: { lat: number; lng: number };
+  shapeVertices: { lat: number; lng: number }[];
+  entryPoint: { lat: number; lng: number };
+  exitPoint: { lat: number; lng: number };
+  hidden?: boolean;
 };
 
 export type RouteEntry = {
@@ -33,7 +51,39 @@ export type ItineraryDay = {
   locations: LocationEntry[];
   routes: RouteEntry[];
   budget: BudgetEntry[];
+  groupNames?: Record<string, string>;
 };
+
+function transitRoleForOrder(index: number): TransitRole {
+  return index % 2 === 0 ? "DEPARTURE" : "ARRIVAL";
+}
+
+export function normalizeLocationTransitRoles(locations: LocationEntry[]): LocationEntry[] {
+  let transitIndex = 0;
+  const roleById = new Map<string, TransitRole>();
+
+  locations
+    .map((location, index) => ({ location, index }))
+    .sort((a, b) => a.location.time.localeCompare(b.location.time) || a.index - b.index)
+    .forEach(({ location }) => {
+      if (location.category !== "TRANSIT") return;
+      roleById.set(location.id, transitRoleForOrder(transitIndex));
+      transitIndex += 1;
+    });
+
+  return locations.map((location) => {
+    const expectedRole = roleById.get(location.id);
+    if (expectedRole) {
+      return location.transitRole === expectedRole
+        ? location
+        : { ...location, transitRole: expectedRole };
+    }
+
+    if (location.transitRole === undefined) return location;
+    const { transitRole: _transitRole, ...rest } = location;
+    return rest;
+  });
+}
 
 // ─── 도시 스타일 ──────────────────────────────────────────────────────────────
 export type CityStyle = { bar: string; text: string; dot: string; glow: string };
@@ -67,6 +117,7 @@ export const CATEGORY_COLOR: Record<LocationCategory, string> = {
   SIGHT:   "text-emerald-400",
   FOOD:    "text-orange-400",
   TRANSIT: "text-blue-400",
+  WALK:    "text-cyan-400",
 };
 
 export const CATEGORY_DOT: Record<LocationCategory, string> = {
@@ -74,6 +125,7 @@ export const CATEGORY_DOT: Record<LocationCategory, string> = {
   SIGHT:   "bg-emerald-400",
   FOOD:    "bg-orange-400",
   TRANSIT: "bg-blue-400",
+  WALK:    "bg-cyan-400",
 };
 
 export const CATEGORY_BAR: Record<LocationCategory, string> = {
@@ -81,6 +133,7 @@ export const CATEGORY_BAR: Record<LocationCategory, string> = {
   SIGHT:   "bg-emerald-500",
   FOOD:    "bg-orange-500",
   TRANSIT: "bg-blue-500",
+  WALK:    "bg-cyan-500",
 };
 
 export const CATEGORY_GLOW: Record<LocationCategory, string> = {
@@ -88,6 +141,7 @@ export const CATEGORY_GLOW: Record<LocationCategory, string> = {
   SIGHT:   "shadow-[0_0_10px_rgba(52,211,153,0.6)]",
   FOOD:    "shadow-[0_0_10px_rgba(251,146,60,0.6)]",
   TRANSIT: "shadow-[0_0_10px_rgba(59,130,246,0.6)]",
+  WALK:    "shadow-[0_0_10px_rgba(34,211,238,0.6)]",
 };
 
 // ─── 도시 지도 데이터 ─────────────────────────────────────────────────────────
@@ -107,7 +161,11 @@ export const CITY_INFO: Record<string, CityInfo> = {
 };
 
 // ─── 날짜 목록 ────────────────────────────────────────────────────────────────
-export const DAYS: DayEntry[] = [];
+export const DAYS: DayEntry[] = [
+  { day: 1, label: "04.23", city: "TOKYO", note: "ARRIVAL" },
+];
 
 // ─── 일정 데이터 ──────────────────────────────────────────────────────────────
-export const ITINERARY: Record<number, ItineraryDay> = {};
+export const ITINERARY: Record<number, ItineraryDay> = {
+  1: { locations: [], routes: [], budget: [] },
+};

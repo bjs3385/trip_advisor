@@ -1,110 +1,22 @@
 "use client";
 
 import { GoogleMap, OverlayView } from "@react-google-maps/api";
-import { useState, useCallback, useEffect, useRef } from "react";
-import { MapPin, Star, Check, MapPinned, Train, Camera, Utensils, Bed, Trash2 } from "lucide-react";
-import { SelectedNode } from "@/app/page";
-import { CATEGORY_COLOR, LocationCategory } from "@/data/itinerary";
+import { useState, useCallback, useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
+import { Bookmark, BookmarkCheck, CalendarPlus, Check, Eye, EyeOff, GripVertical, MapPin, Pentagon, Trash2, X } from "lucide-react";
+import type { SelectedNode } from "@/app/page";
 import { useItineraryStore } from "@/store/itinerary";
 import { cn } from "@/lib/utils";
-
-const JAPAN_CENTER = { lat: 36.2048, lng: 138.2529 };
-
-const DARK_MAP_STYLE: google.maps.MapTypeStyle[] = [
-  { elementType: "geometry", stylers: [{ color: "#06090e" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#06090e" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#8b949e" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#161b22" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#30363d" }] },
-  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#0d1117" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#000000" }] },
-  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#38bdf8" }] },
-  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#0d1117" }] },
-  { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#0f1f14" }] },
-  { featureType: "transit", elementType: "geometry", stylers: [{ color: "#0d1117" }] },
-  { featureType: "transit.station", elementType: "labels.icon", stylers: [{ visibility: "on" }] },
-  { featureType: "transit.station", elementType: "labels.text.fill", stylers: [{ color: "#8b949e" }] },
-  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#30363d" }] },
-];
-
-const MAP_OPTIONS: google.maps.MapOptions = {
-  disableDefaultUI: true,
-  styles: DARK_MAP_STYLE,
-  backgroundColor: "#06090e",
-  minZoom: 4,
-};
-
-// 카테고리 → 마커 색상
-const CATEGORY_MARKER_COLOR: Record<string, string> = {
-  HOTEL:   '#A371F7',
-  SIGHT:   '#3FB950',
-  FOOD:    '#FB923C',
-  TRANSIT: '#58A6FF',
-};
-
-// 일차별 동선 색상
-const DAY_ROUTE_COLORS = [
-  '#58A6FF', '#3FB950', '#FB923C', '#A371F7', '#F85149',
-  '#79C0FF', '#56D364', '#FFA657', '#D2A8FF', '#FF7B72',
-];
-
-// 두 좌표 간 직선 거리 (km) — Directions 모드 자동 추정에 사용
-function haversineKm(a: google.maps.LatLngLiteral, b: google.maps.LatLngLiteral): number {
-  const R = 6371;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const x = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(x));
-}
-
-type RouteMode = "WALK" | "TRANSIT" | null;
-
-function segmentKey(
-  a: google.maps.LatLngLiteral,
-  b: google.maps.LatLngLiteral,
-  mode: RouteMode,
-): string {
-  const k = (n: number) => n.toFixed(5);
-  return `${k(a.lat)},${k(a.lng)}|${k(b.lat)},${k(b.lng)}|${mode ?? "STRAIGHT"}`;
-}
-
-// Routes API 호출 — 실패 시 null 반환해 호출자가 직선 폴백하도록
-async function fetchRoutePath(
-  origin: google.maps.LatLngLiteral,
-  dest: google.maps.LatLngLiteral,
-  mode: Exclude<RouteMode, null>,
-  apiKey: string,
-): Promise<google.maps.LatLngLiteral[] | null> {
-  try {
-    const res = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": "routes.polyline.geoJsonLinestring",
-      },
-      body: JSON.stringify({
-        origin:      { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
-        destination: { location: { latLng: { latitude: dest.lat,   longitude: dest.lng   } } },
-        travelMode: mode,
-        polylineEncoding: "GEO_JSON_LINESTRING",
-        languageCode: "ko",
-        regionCode: "JP",
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const coords = data?.routes?.[0]?.polyline?.geoJsonLinestring?.coordinates;
-    if (!Array.isArray(coords) || coords.length < 2) return null;
-    // GeoJSON은 [lng, lat] 순
-    return coords.map((c: [number, number]) => ({ lng: c[0], lat: c[1] }));
-  } catch {
-    return null;
-  }
-}
+import { CITY_INFO } from "@/data/itinerary";
+import { computeNextStart } from "@/components/layout/timeline/utils";
+import { DAY_ROUTE_COLORS, JAPAN_CENTER, MAP_OPTIONS } from "./mapConfig";
+import { MapPlaceholder } from "./MapPlaceholder";
+import { LocationMarker } from "./LocationMarker";
+import { PoiPopup } from "./PoiPopup";
+import { useRoutePolylines } from "./useRoutePolylines";
+import { useGroupShapes } from "./useGroupShapes";
+import { buildDayGroups } from "./mapUtils";
+import type { PlacePopup } from "./mapTypes";
 
 interface MapViewProps {
   onNodeSelect: (node: SelectedNode) => void;
@@ -112,428 +24,463 @@ interface MapViewProps {
   loadError: boolean;
 }
 
-function MapPlaceholder() {
-  return (
-    <div className="w-full h-full bg-[#06090e] flex items-center justify-center relative overflow-hidden">
-      {/* 격자 패턴 */}
-      <div
-        className="absolute inset-0 opacity-20"
-        style={{
-          backgroundImage:
-            "linear-gradient(#1e293b 1px, transparent 1px), linear-gradient(90deg, #1e293b 1px, transparent 1px)",
-          backgroundSize: "40px 40px",
-        }}
-      />
-      {/* 가상 지형 원형 */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="w-[600px] h-[600px] rounded-full border border-blue-500/10" />
-        <div className="absolute w-[400px] h-[400px] rounded-full border border-blue-400/20" />
-        <div className="absolute w-[200px] h-[200px] rounded-full border border-blue-300/30" />
-      </div>
+const MAP_TILE_SIZE = 256;
+const FOCUS_EXTRA_MARGIN_PX = 24;
+const MIN_FOCUS_OFFSET_PX = 96;
+const MAX_FOCUS_OFFSET_PX = 220;
+const AREA_TOOLS_WIDTH = 260;
+const AREA_TOOLS_MIN_VISIBLE = 48;
 
-      <div className="relative flex flex-col items-center gap-4 p-6 bg-black/40 border border-white/10 rounded-sm backdrop-blur-md">
-        <MapPin className="w-8 h-8 text-blue-500 animate-pulse" />
-        <div className="text-center">
-          <p className="text-blue-400 text-[13px] font-bold tracking-[0.2em] uppercase mb-1">
-            Map Render Engine Offline
-          </p>
-          <p className="text-slate-500 text-[10px] font-mono tracking-widest">
-            AWAITING NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-type PlacePopup = {
-  position: google.maps.LatLngLiteral;
-  name: string;
-  address?: string;
-  type?: string;
-  rating?: number;
-  placeId: string;
-};
-
-const ADD_BUTTONS: { cat: LocationCategory; label: string; Icon: React.ElementType }[] = [
-  { cat: "TRANSIT", label: "교통", Icon: Train },
-  { cat: "SIGHT",   label: "위치", Icon: Camera },
-  { cat: "FOOD",    label: "음식", Icon: Utensils },
-  { cat: "HOTEL",   label: "호텔", Icon: Bed },
-];
-
-const CATEGORY_MARKER_ICON: Record<LocationCategory, React.ElementType> = {
-  HOTEL: Bed, SIGHT: Camera, FOOD: Utensils, TRANSIT: Train,
-};
-
-function LocationMarker({
-  position,
-  category,
-  isSelected,
-  onClick,
-}: {
-  position: google.maps.LatLngLiteral;
-  category: LocationCategory;
-  isSelected: boolean;
-  onClick: () => void;
-}) {
-  const Icon = CATEGORY_MARKER_ICON[category];
-  const color = CATEGORY_MARKER_COLOR[category] ?? '#58A6FF';
-  const size = isSelected ? 30 : 24;
-  return (
-    <OverlayView position={position} mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}>
-      <div
-        onClick={(e) => { e.stopPropagation(); onClick(); }}
-        onMouseDown={(e) => e.stopPropagation()}
-        style={{
-          transform: 'translate(-50%, -50%)',
-          width: size,
-          height: size,
-          background: color,
-          borderRadius: '50%',
-          border: isSelected ? '2px solid #ffffff' : `1px solid rgba(255,255,255,0.4)`,
-          boxShadow: `0 0 ${isSelected ? 14 : 6}px ${color}`,
-          opacity: isSelected ? 1 : 0.85,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          transition: 'width 0.15s ease-out, height 0.15s ease-out, box-shadow 0.15s ease-out',
-        }}
-      >
-        <Icon
-          color="#ffffff"
-          size={isSelected ? 16 : 13}
-          strokeWidth={2.25}
-        />
-      </div>
-    </OverlayView>
-  );
-}
-
-function PoiPopup({ place, onClose }: { place: PlacePopup; onClose: () => void }) {
-  const addLocation = useItineraryStore((s) => s.addLocation);
-  const days        = useItineraryStore((s) => s.days);
-  const hasDays     = days.length > 0;
-  const [selectedDay, setSelectedDay] = useState<number>(() => days[0]?.day ?? 1);
-  const [addedCat, setAddedCat] = useState<LocationCategory | null>(null);
-
-  // days 변경 시 selectedDay가 유효 범위 밖이면 첫 일자로 동기화
-  useEffect(() => {
-    if (hasDays && !days.some((d) => d.day === selectedDay)) {
-      setSelectedDay(days[0].day);
-    }
-  }, [days, hasDays, selectedDay]);
-
-  const typeLabel = place.type?.replace(/_/g, ' ');
-  const lat = place.position.lat.toFixed(4);
-  const lng = place.position.lng.toFixed(4);
-
-  const handleAdd = (category: LocationCategory) => {
-    if (!hasDays) return;
-    addLocation(selectedDay, {
-      id: `poi-${place.placeId.slice(-8)}-${Date.now()}`,
-      name: place.name || place.address || "장소",
-      category,
-      time: "00:00",
-      position: place.position,
-    });
-    setAddedCat(category);
-    setTimeout(() => setAddedCat(null), 1500);
+function latLngToWorldPoint(position: google.maps.LatLngLiteral) {
+  const siny = Math.min(Math.max(Math.sin((position.lat * Math.PI) / 180), -0.9999), 0.9999);
+  return {
+    x: ((position.lng + 180) / 360) * MAP_TILE_SIZE,
+    y: (0.5 - Math.log((1 + siny) / (1 - siny)) / (4 * Math.PI)) * MAP_TILE_SIZE,
   };
+}
 
-  return (
-    <div
-      className="relative"
-      style={{ transform: 'translate(-50%, calc(-100% - 18px))', width: 220 }}
-      onClick={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      <div
-        className="bg-[#0d1117] border border-white/10 rounded-sm overflow-hidden text-left"
-        style={{ boxShadow: '0 0 20px rgba(0,0,0,0.8), inset 0 0 0 1px rgba(255,255,255,0.05)' }}
-      >
-        {/* 헤더 */}
-        <div className="px-3 py-2 flex items-start justify-between gap-2 border-b border-white/[0.08]">
-          <div>
-            <div className="flex items-center gap-1.5 mb-0.5">
-              <div className="w-1 h-1 rounded-full bg-blue-400 shadow-[0_0_5px_rgba(96,165,250,0.8)]" />
-              <span className="text-[11px] font-bold text-slate-100 tracking-wide leading-tight">
-                {place.name || "—"}
-              </span>
-            </div>
-            {typeLabel && (
-              <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">
-                {typeLabel}
-              </span>
-            )}
-          </div>
-          <button
-            className="text-slate-600 hover:text-slate-300 text-[10px] font-mono leading-none shrink-0 mt-0.5"
-            onClick={onClose}
-          >
-            ✕
-          </button>
-        </div>
+function worldPointToLatLng(point: { x: number; y: number }): google.maps.LatLngLiteral {
+  const lng = (point.x / MAP_TILE_SIZE) * 360 - 180;
+  const n = Math.PI - (2 * Math.PI * point.y) / MAP_TILE_SIZE;
+  const lat = (180 / Math.PI) * Math.atan(Math.sinh(n));
+  return { lat, lng };
+}
 
-        <div className="px-3 py-2 flex flex-col gap-2">
-          {/* 별점 */}
-          {place.rating !== undefined && (
-            <div className="flex items-center gap-1.5">
-              <Star className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400" />
-              <span className="text-[10px] font-mono text-yellow-400">{place.rating.toFixed(1)}</span>
-              <span className="text-[9px] text-slate-600">/5</span>
-            </div>
-          )}
+function getBottomFocusOffset(map: google.maps.Map) {
+  const panel = document.querySelector<HTMLElement>("[data-map-focus-obstruction='bottom']");
+  if (!panel) return { x: 0, y: -160 };
 
-          {/* 주소 */}
-          {place.address && (
-            <div className="flex items-start gap-1.5">
-              <MapPinned className="w-2.5 h-2.5 text-slate-600 mt-0.5 shrink-0" />
-              <p className="text-[9px] text-slate-500 leading-relaxed">{place.address}</p>
-            </div>
-          )}
+  const mapRect = map.getDiv().getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  const overlap = Math.max(0, mapRect.bottom - Math.max(mapRect.top, panelRect.top));
+  const y = -Math.min(
+    MAX_FOCUS_OFFSET_PX,
+    Math.max(MIN_FOCUS_OFFSET_PX, overlap / 2 + FOCUS_EXTRA_MARGIN_PX),
+  );
+  return { x: 0, y };
+}
 
-          {/* 좌표 */}
-          <p className="text-[8px] font-mono text-slate-700">{lat}, {lng}</p>
+function setMapCenterWithScreenOffset(
+  map: google.maps.Map,
+  position: google.maps.LatLngLiteral,
+  offset: { x: number; y: number },
+  zoom = map.getZoom() ?? 6,
+) {
+  const scale = 2 ** zoom;
+  const target = latLngToWorldPoint(position);
+  const center = {
+    x: target.x - offset.x / scale,
+    y: target.y - offset.y / scale,
+  };
+  map.setCenter(worldPointToLatLng(center));
+}
 
-          {/* 구분선 */}
-          <div className="border-t border-white/[0.06]" />
+function focusMapPoint(map: google.maps.Map, position: google.maps.LatLngLiteral, minZoom: number) {
+  const zoom = Math.max(map.getZoom() ?? 6, minZoom);
+  if ((map.getZoom() ?? 6) < minZoom) map.setZoom(minZoom);
+  setMapCenterWithScreenOffset(map, position, getBottomFocusOffset(map), zoom);
+}
 
-          {/* 일정 추가 */}
-          {hasDays ? (
-            <div className="flex flex-col gap-1.5">
-              <select
-                value={selectedDay}
-                onChange={(e) => setSelectedDay(Number(e.target.value))}
-                className="bg-white/5 border border-white/10 text-slate-300 text-[9px] font-mono rounded-sm px-1.5 py-1 focus:outline-none focus:border-blue-500/50"
-              >
-                {days.map((d) => (
-                  <option key={d.day} value={d.day} className="bg-[#0d1117]">
-                    Day {d.day} · {d.label}{d.city ? ` · ${d.city}` : ""}
-                  </option>
-                ))}
-              </select>
-              <div className="grid grid-cols-4 gap-1">
-                {ADD_BUTTONS.map(({ cat, label, Icon }) => {
-                  const isAdded = addedCat === cat;
-                  return (
-                    <button
-                      key={cat}
-                      onClick={() => handleAdd(cat)}
-                      title={`${label}로 추가`}
-                      className={cn(
-                        "flex flex-col items-center gap-0.5 py-1 rounded-sm border transition-colors",
-                        isAdded
-                          ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400"
-                          : cn("bg-white/5 border-white/10 hover:bg-white/10", CATEGORY_COLOR[cat])
-                      )}
-                    >
-                      {isAdded ? <Check className="w-2.5 h-2.5" /> : <Icon className="w-2.5 h-2.5" />}
-                      <span className="text-[8px] font-mono">{label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <p className="text-[9px] font-mono text-slate-500 text-center py-1 border border-dashed border-slate-700/60 rounded-sm">
-              간트에 일자를 먼저 추가하세요
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div
-        className="absolute left-1/2 -translate-x-1/2 w-0 h-0"
-        style={{
-          borderLeft: '6px solid transparent',
-          borderRight: '6px solid transparent',
-          borderTop: '8px solid rgba(255,255,255,0.10)',
-        }}
-      />
-    </div>
+function offsetCurrentMapFocus(map: google.maps.Map) {
+  const center = map.getCenter();
+  if (!center) return;
+  setMapCenterWithScreenOffset(
+    map,
+    { lat: center.lat(), lng: center.lng() },
+    getBottomFocusOffset(map),
   );
 }
 
-export default function MapView({ onNodeSelect, isLoaded, loadError }: MapViewProps) {
-  const setSelectedMapCity  = useItineraryStore((s) => s.setSelectedMapCity);
-  const itinerary           = useItineraryStore((s) => s.itinerary);
-  const selectedLocation    = useItineraryStore((s) => s.selectedLocation);
+function centroid(points: google.maps.LatLngLiteral[]): google.maps.LatLngLiteral {
+  const lat = points.reduce((sum, point) => sum + point.lat, 0) / points.length;
+  const lng = points.reduce((sum, point) => sum + point.lng, 0) / points.length;
+  return { lat, lng };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+export default function MapView({ onNodeSelect: _onNodeSelect, isLoaded, loadError }: MapViewProps) {
+  void _onNodeSelect;
+
+  const setSelectedMapCity = useItineraryStore((s) => s.setSelectedMapCity);
+  const itinerary = useItineraryStore((s) => s.itinerary);
+  const routeComputedDays = useItineraryStore((s) => s.routeComputedDays);
+  const routeComputedLocationKeys = useItineraryStore((s) => s.routeComputedLocationKeys);
+  const routeComputeRequestId = useItineraryStore((s) => s.routeComputeRequestId);
+  const selectedLocation = useItineraryStore((s) => s.selectedLocation);
+  const selectedMapCity = useItineraryStore((s) => s.selectedMapCity);
   const setSelectedLocation = useItineraryStore((s) => s.setSelectedLocation);
-  const searchTarget        = useItineraryStore((s) => s.searchTarget);
-  const setSearchTarget     = useItineraryStore((s) => s.setSearchTarget);
-  const removeLocation      = useItineraryStore((s) => s.removeLocation);
-  const [poiPopup, setPoiPopup] = useState<PlacePopup | null>(null);
+  const searchTarget = useItineraryStore((s) => s.searchTarget);
+  const setSearchTarget = useItineraryStore((s) => s.setSearchTarget);
+  const removeLocation = useItineraryStore((s) => s.removeLocation);
+  const activeDay = useItineraryStore((s) => s.activeDay);
+  const days = useItineraryStore((s) => s.days);
+  const addLocation = useItineraryStore((s) => s.addLocation);
+  const bookmarks = useItineraryStore((s) => s.bookmarks);
+  const addBookmark = useItineraryStore((s) => s.addBookmark);
+  const removeBookmark = useItineraryStore((s) => s.removeBookmark);
+  const mapAreas = useItineraryStore((s) => s.mapAreas);
+  const addMapArea = useItineraryStore((s) => s.addMapArea);
+  const toggleMapAreaHidden = useItineraryStore((s) => s.toggleMapAreaHidden);
+  const removeMapArea = useItineraryStore((s) => s.removeMapArea);
+  const focusGroupTarget = useItineraryStore((s) => s.focusGroupTarget);
+  const setFocusGroupTarget = useItineraryStore((s) => s.setFocusGroupTarget);
+  const setMapCamera = useItineraryStore((s) => s.setMapCamera);
+  const [manualPoiPopup, setManualPoiPopup] = useState<PlacePopup | null>(null);
+  const [map, setMap] = useState<google.maps.Map | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
+  const cameraSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasHandledInitialIdleRef = useRef(false);
+  const draftAreaPolygonRef = useRef<google.maps.Polygon | null>(null);
+  const [areaMode, setAreaMode] = useState<"idle" | "draw" | "entry" | "exit">("idle");
+  const [draftVertices, setDraftVertices] = useState<google.maps.LatLngLiteral[]>([]);
+  const [draftEntryPoint, setDraftEntryPoint] = useState<google.maps.LatLngLiteral | null>(null);
+  const [draftExitPoint, setDraftExitPoint] = useState<google.maps.LatLngLiteral | null>(null);
+  const [draftAreaName, setDraftAreaName] = useState("");
+  const [areaToolsPosition, setAreaToolsPosition] = useState({ x: 16, y: 360 });
+  const areaToolsDragRef = useRef<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const searchPopup = searchTarget
+    ? {
+        position: searchTarget.position,
+        placeId: searchTarget.placeId,
+        name: searchTarget.name,
+        address: searchTarget.address,
+        type: searchTarget.type,
+        rating: searchTarget.rating,
+      }
+    : null;
+  const activePoiPopup = manualPoiPopup ?? searchPopup;
+
+  useEffect(() => {
+    return () => {
+      if (cameraSaveTimerRef.current) clearTimeout(cameraSaveTimerRef.current);
+      draftAreaPolygonRef.current?.setMap(null);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = areaToolsDragRef.current;
+      if (!drag) return;
+      setAreaToolsPosition({
+        x: clamp(
+          drag.originX + event.clientX - drag.startX,
+          8,
+          Math.max(8, window.innerWidth - AREA_TOOLS_MIN_VISIBLE),
+        ),
+        y: clamp(
+          drag.originY + event.clientY - drag.startY,
+          8,
+          Math.max(8, window.innerHeight - AREA_TOOLS_MIN_VISIBLE),
+        ),
+      });
+    };
+    const handlePointerUp = () => {
+      areaToolsDragRef.current = null;
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, []);
+
+  const startAreaToolsDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    areaToolsDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: areaToolsPosition.x,
+      originY: areaToolsPosition.y,
+    };
+  }, [areaToolsPosition]);
+
+  useEffect(() => {
+    if (!map || !isLoaded || draftVertices.length === 0) {
+      draftAreaPolygonRef.current?.setMap(null);
+      draftAreaPolygonRef.current = null;
+      return;
+    }
+
+    if (!draftAreaPolygonRef.current) {
+      draftAreaPolygonRef.current = new google.maps.Polygon({
+        map,
+        paths: draftVertices,
+        strokeColor: "#38bdf8",
+        strokeOpacity: 0.9,
+        strokeWeight: 1.8,
+        fillColor: "#38bdf8",
+        fillOpacity: 0.14,
+        clickable: false,
+        zIndex: 10,
+      });
+    } else {
+      draftAreaPolygonRef.current.setPath(draftVertices);
+    }
+  }, [draftVertices, isLoaded, map]);
+
+  const resetAreaDraft = useCallback(() => {
+    setAreaMode("idle");
+    setDraftVertices([]);
+    setDraftEntryPoint(null);
+    setDraftExitPoint(null);
+    setDraftAreaName("");
+  }, []);
+
+  const addDraftAreaToTimeline = useCallback(() => {
+    const targetDay = days.some((day) => day.day === activeDay) ? activeDay : days[0]?.day;
+    if (!targetDay || draftVertices.length < 3 || !draftEntryPoint || !draftExitPoint) return;
+
+    const existing = useItineraryStore.getState().itinerary[targetDay]?.locations ?? [];
+    const name = draftAreaName.trim() || "AREA";
+    const areaId = `area-${Date.now().toString(36)}`;
+    const area = {
+      id: areaId,
+      name,
+      position: centroid(draftVertices),
+      shapeVertices: draftVertices,
+      entryPoint: draftEntryPoint,
+      exitPoint: draftExitPoint,
+    };
+    addMapArea(area);
+    addLocation(targetDay, {
+      id: `${areaId}-schedule`,
+      name,
+      category: "SIGHT",
+      time: computeNextStart(existing),
+      areaId,
+      position: area.position,
+      shapeVertices: draftVertices,
+      entryPoint: draftEntryPoint,
+      exitPoint: draftExitPoint,
+    });
+    resetAreaDraft();
+  }, [activeDay, addLocation, addMapArea, days, draftAreaName, draftEntryPoint, draftExitPoint, draftVertices, resetAreaDraft]);
 
   // SearchModule에서 선택 시 → pan + popup 오픈 → store 트리거 클리어
   useEffect(() => {
     if (!searchTarget) return;
-    setPoiPopup({
-      position: searchTarget.position,
-      placeId: searchTarget.placeId,
-      name: searchTarget.name,
-      address: searchTarget.address,
-      type: searchTarget.type,
-      rating: searchTarget.rating,
-    });
     if (mapRef.current) {
-      mapRef.current.panTo(searchTarget.position);
-      const z = mapRef.current.getZoom() ?? 6;
-      if (z < 13) mapRef.current.setZoom(15);
+      focusMapPoint(mapRef.current, searchTarget.position, 15);
     }
-    setSearchTarget(null);
-  }, [searchTarget, setSearchTarget]);
+  }, [searchTarget]);
 
   // position이 있는 모든 일정 항목 수집
-  const mappedLocations = Object.entries(itinerary).flatMap(([dayStr, dayData]) =>
-    dayData.locations
-      .filter((loc) => loc.position)
-      .map((loc) => ({ ...loc, day: Number(dayStr) }))
+  const mappedLocations = useMemo(
+    () =>
+      Object.entries(itinerary).flatMap(([dayStr, dayData]) =>
+        dayData.locations
+          .slice()
+          .sort((a, b) => a.time.localeCompare(b.time))
+          .map((loc, index) => ({ ...loc, routeOrder: index + 1 }))
+          .filter((loc) => loc.position)
+          .map((loc) => ({ ...loc, day: Number(dayStr) })),
+      ),
+    [itinerary],
   );
 
-  // 동선 폴리라인을 직접 google.maps.Polyline 인스턴스로 관리
-  // (라이브러리 <Polyline>은 path 변경/언마운트 시 인스턴스가 지도에서 제거되지 않는 케이스가 있음)
-  const polylineRefs = useRef<Map<string, google.maps.Polyline>>(new Map());
-  // (origin, dest, mode) → resolved path 캐시 (Routes API 비용 절감)
-  const segmentCacheRef = useRef<Map<string, google.maps.LatLngLiteral[]>>(new Map());
+  useEffect(() => {
+    const existingIds = new Set(mapAreas.map((area) => area.id));
+    for (const loc of mappedLocations) {
+      if (!loc.position || !loc.entryPoint || !loc.exitPoint || !loc.shapeVertices || loc.shapeVertices.length < 3) {
+        continue;
+      }
+      const areaId = loc.areaId ?? (loc.id.endsWith("-schedule") ? loc.id.replace(/-schedule$/, "") : loc.id);
+      if (existingIds.has(areaId)) continue;
+      addMapArea({
+        id: areaId,
+        name: loc.name || "AREA",
+        position: loc.position,
+        shapeVertices: loc.shapeVertices,
+        entryPoint: loc.entryPoint,
+        exitPoint: loc.exitPoint,
+      });
+      existingIds.add(areaId);
+    }
+  }, [addMapArea, mapAreas, mappedLocations]);
+
+  const activeDayScheduledAreaIds = useMemo(() => {
+    const targetDay = days.some((day) => day.day === activeDay) ? activeDay : days[0]?.day;
+    if (!targetDay) return new Set<string>();
+    return new Set(
+      (itinerary[targetDay]?.locations ?? [])
+        .map((loc) => loc.areaId ?? (loc.id.endsWith("-schedule") ? loc.id.replace(/-schedule$/, "") : ""))
+        .filter(Boolean),
+    );
+  }, [activeDay, days, itinerary]);
+
+  const addMapAreaToTimeline = useCallback((area: {
+    id: string;
+    name: string;
+    position: google.maps.LatLngLiteral;
+    shapeVertices: google.maps.LatLngLiteral[];
+    entryPoint: google.maps.LatLngLiteral;
+    exitPoint: google.maps.LatLngLiteral;
+  }) => {
+    const targetDay = days.some((day) => day.day === activeDay) ? activeDay : days[0]?.day;
+    if (!targetDay) return;
+    const existing = useItineraryStore.getState().itinerary[targetDay]?.locations ?? [];
+    if (existing.some((loc) => (loc.areaId ?? loc.id.replace(/-schedule$/, "")) === area.id)) return;
+    addLocation(targetDay, {
+      id: `${area.id}-schedule`,
+      name: area.name,
+      category: "SIGHT",
+      time: computeNextStart(existing),
+      areaId: area.id,
+      position: area.position,
+      shapeVertices: area.shapeVertices,
+      entryPoint: area.entryPoint,
+      exitPoint: area.exitPoint,
+    });
+  }, [activeDay, addLocation, days]);
+
+  useEffect(() => {
+    if (!selectedLocation || !mapRef.current) return;
+    const target = mappedLocations.find(
+      (loc) => loc.day === selectedLocation.day && loc.id === selectedLocation.locationId,
+    );
+    if (!target?.position) return;
+    focusMapPoint(mapRef.current, target.position, 15);
+  }, [selectedLocation, mappedLocations]);
+
+  useEffect(() => {
+    if (!selectedMapCity || !mapRef.current) return;
+    const target = CITY_INFO[selectedMapCity];
+    if (!target) return;
+    focusMapPoint(mapRef.current, target.position, 10);
+  }, [selectedMapCity]);
 
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+  useRoutePolylines({
+    map,
+    itinerary,
+    isLoaded,
+    apiKey,
+    routeComputedDays,
+    routeComputedLocationKeys,
+    routeComputeRequestId,
+  });
+  useGroupShapes({ map, itinerary, mapAreas, isLoaded });
+
+  const allGroups = useMemo(() => {
+    if (!isLoaded) return [];
+    return buildDayGroups(
+      itinerary,
+      (dayStr) => DAY_ROUTE_COLORS[(Number(dayStr) - 1) % DAY_ROUTE_COLORS.length],
+    );
+  }, [itinerary, isLoaded]);
+
+  const groupLabels = useMemo(() => {
+    return allGroups
+      .map((g) => {
+        const name = itinerary[Number(g.dayStr)]?.groupNames?.[g.groupKey];
+        if (!name) return null;
+        return {
+          key: `${g.dayStr}:${g.groupKey}`,
+          anchor: g.centroid,
+          name,
+          color: g.color,
+        };
+      })
+      .filter((v): v is { key: string; anchor: google.maps.LatLngLiteral; name: string; color: string } => v !== null);
+  }, [allGroups, itinerary]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !isLoaded) return;
-    const key = apiKey;
-    if (!key) return;
-
-    let cancelled = false;
-
-    const handler = window.setTimeout(async () => {
-      // 1) 현재 itinerary에서 day별 세그먼트 계산 (mode 자동 추정)
-      const desired = new Map<
-        string,
-        { color: string; segs: { from: google.maps.LatLngLiteral; to: google.maps.LatLngLiteral; mode: RouteMode }[] }
-      >();
-      Object.entries(itinerary).forEach(([dayStr, dayData]) => {
-        const positioned = dayData.locations.filter((l) => l.position);
-        if (positioned.length < 2) return;
-        const segs: { from: google.maps.LatLngLiteral; to: google.maps.LatLngLiteral; mode: RouteMode }[] = [];
-        for (let i = 0; i < positioned.length - 1; i++) {
-          const from = positioned[i].position!;
-          const to   = positioned[i + 1].position!;
-          const dist = haversineKm(from, to);
-          // 너무 멀면 mode=null → API 호출 없이 직선 폴백 (비용 절감)
-          const mode: RouteMode = dist < 3 ? "WALK" : dist < 150 ? "TRANSIT" : null;
-          segs.push({ from, to, mode });
-        }
-        desired.set(dayStr, {
-          color: DAY_ROUTE_COLORS[(Number(dayStr) - 1) % DAY_ROUTE_COLORS.length],
-          segs,
-        });
-      });
-
-      // 2) 사라진 day의 폴리라인 제거
-      polylineRefs.current.forEach((line, k) => {
-        if (!desired.has(k)) {
-          line.setMap(null);
-          polylineRefs.current.delete(k);
-        }
-      });
-
-      // 3) day별로 세그먼트 path 가져와 이어붙여 폴리라인 갱신
-      for (const [dayStr, { color, segs }] of desired) {
-        const segPaths: google.maps.LatLngLiteral[][] = [];
-        for (const seg of segs) {
-          const cacheK = segmentKey(seg.from, seg.to, seg.mode);
-          let path = segmentCacheRef.current.get(cacheK);
-          if (!path) {
-            if (seg.mode) {
-              const fetched = await fetchRoutePath(seg.from, seg.to, seg.mode, key);
-              if (fetched) path = fetched;
-            }
-            if (!path) path = [seg.from, seg.to];
-            segmentCacheRef.current.set(cacheK, path);
-          }
-          if (cancelled) return;
-          segPaths.push(path);
-        }
-
-        // 세그먼트 사이 중복 끝점 제거하면서 이어붙이기
-        const fullPath: google.maps.LatLngLiteral[] = [];
-        segPaths.forEach((p, i) => {
-          fullPath.push(...(i === 0 ? p : p.slice(1)));
-        });
-
-        const existing = polylineRefs.current.get(dayStr);
-        if (existing) {
-          existing.setPath(fullPath);
-          existing.setOptions({ strokeColor: color });
-        } else {
-          const line = new google.maps.Polyline({
-            path: fullPath,
-            map,
-            geodesic: false,
-            strokeColor: color,
-            strokeOpacity: 0.7,
-            strokeWeight: 3,
-          });
-          polylineRefs.current.set(dayStr, line);
-        }
-      }
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handler);
-    };
-  }, [itinerary, isLoaded, apiKey]);
-
-  // 컴포넌트 언마운트 시 폴리라인 전부 정리
-  useEffect(() => {
-    const refs = polylineRefs.current;
-    return () => {
-      refs.forEach((line) => line.setMap(null));
-      refs.clear();
-    };
-  }, []);
-
-  if (!apiKey || loadError) return <MapPlaceholder />;
-
+    if (!focusGroupTarget || !mapRef.current) return;
+    const target = allGroups.find(
+      (g) => Number(g.dayStr) === focusGroupTarget.day && g.groupKey === focusGroupTarget.groupId,
+    );
+    if (!target) {
+      setFocusGroupTarget(null);
+      return;
+    }
+    const bounds = new google.maps.LatLngBounds();
+    for (const v of target.shapeVertices) bounds.extend(v);
+    mapRef.current.fitBounds(bounds, { top: 80, bottom: 80, left: 80, right: 80 });
+    window.setTimeout(() => {
+      if (mapRef.current) offsetCurrentMapFocus(mapRef.current);
+    }, 0);
+    setFocusGroupTarget(null);
+  }, [focusGroupTarget, allGroups, setFocusGroupTarget]);
   const handleMapClick = useCallback(
-    (event: google.maps.MapMouseEvent) => {
+    (event: google.maps.MapMouseEvent | google.maps.IconMouseEvent) => {
       if (!event.latLng) return;
       const position = { lat: event.latLng.lat(), lng: event.latLng.lng() };
+
+      if (areaMode !== "idle") {
+        if (areaMode === "draw") {
+          setDraftVertices((current) => [...current, position]);
+        } else if (areaMode === "entry") {
+          setDraftEntryPoint(position);
+          setAreaMode("exit");
+        } else if (areaMode === "exit") {
+          setDraftExitPoint(position);
+        }
+        return;
+      }
+
       setSelectedMapCity(null);
+      setSearchTarget(null);
 
       // 1) POI 아이콘 클릭 — placeId가 바로 들어오는 경우
-      if ((event as any).placeId) {
-        (event as any).stop();
-        const placeId: string = (event as any).placeId;
+      if ("placeId" in event && event.placeId) {
+        event.stop();
+        const placeId = event.placeId;
 
-        const place = new google.maps.places.Place({ id: placeId });
+        const place = new google.maps.places.Place({ id: placeId }) as google.maps.places.Place & {
+          displayName?: string;
+          formattedAddress?: string;
+          rating?: number;
+          types?: string[];
+        };
         place.fetchFields({ fields: ["displayName", "formattedAddress", "rating", "types"] })
           .then(() => {
-            setPoiPopup({
+            setManualPoiPopup({
               position,
               placeId,
-              name: (place as any).displayName ?? "",
-              address: (place as any).formattedAddress,
+              name: place.displayName ?? "",
+              address: place.formattedAddress,
               type: place.types?.[0],
               rating: place.rating ?? undefined,
             });
           })
           .catch(() => {
-            setPoiPopup({ position, placeId, name: "" });
+            setManualPoiPopup({ position, placeId, name: "" });
           });
         return;
       }
 
       // 2) 빈 영역/역 라벨 클릭 — 근처 역을 Nearby Search로 탐색
-      const PlaceCtor = (google.maps.places as any).Place;
+      type NearbySearchResult = {
+        id?: string;
+        displayName?: string;
+        formattedAddress?: string;
+        location?: google.maps.LatLng;
+        types?: string[];
+        rating?: number;
+      };
+      type SearchablePlaceCtor = typeof google.maps.places.Place & {
+        searchNearby?: (request: {
+          fields: string[];
+          locationRestriction: { center: google.maps.LatLngLiteral; radius: number };
+          includedPrimaryTypes: string[];
+          maxResultCount: number;
+          rankPreference?: unknown;
+        }) => Promise<{ places: NearbySearchResult[] }>;
+      };
+      const PlaceCtor = google.maps.places.Place as SearchablePlaceCtor;
       if (!PlaceCtor?.searchNearby) {
-        setPoiPopup(null);
+        setManualPoiPopup(null);
         return;
       }
 
@@ -548,16 +495,18 @@ export default function MapView({ onNodeSelect, isLoaded, loadError }: MapViewPr
           "bus_station",
         ],
         maxResultCount: 1,
-        rankPreference: (google.maps.places as any).SearchNearbyRankPreference?.DISTANCE,
+        rankPreference: (google.maps.places as unknown as {
+          SearchNearbyRankPreference?: { DISTANCE?: unknown };
+        }).SearchNearbyRankPreference?.DISTANCE,
       })
-        .then(({ places }: { places: any[] }) => {
+        .then(({ places }: { places: NearbySearchResult[] }) => {
           const found = places?.[0];
           if (!found) {
-            setPoiPopup(null);
+            setManualPoiPopup(null);
             return;
           }
           const loc = found.location;
-          setPoiPopup({
+          setManualPoiPopup({
             position: loc ? { lat: loc.lat(), lng: loc.lng() } : position,
             placeId: found.id ?? "",
             name: found.displayName ?? "",
@@ -567,11 +516,48 @@ export default function MapView({ onNodeSelect, isLoaded, loadError }: MapViewPr
           });
         })
         .catch(() => {
-          setPoiPopup(null);
+          setManualPoiPopup(null);
         });
     },
-    [setSelectedMapCity]
+    [areaMode, setSearchTarget, setSelectedMapCity]
   );
+
+  const handleMapIdle = useCallback(() => {
+    const currentMap = mapRef.current;
+    if (!currentMap) return;
+
+    if (!hasHandledInitialIdleRef.current) {
+      hasHandledInitialIdleRef.current = true;
+      return;
+    }
+
+    const center = currentMap.getCenter();
+    const zoom = currentMap.getZoom();
+    if (!center || zoom === undefined) return;
+
+    if (cameraSaveTimerRef.current) clearTimeout(cameraSaveTimerRef.current);
+    cameraSaveTimerRef.current = setTimeout(() => {
+      const next = {
+        center: {
+          lat: Number(center.lat().toFixed(6)),
+          lng: Number(center.lng().toFixed(6)),
+        },
+        zoom: Number(zoom.toFixed(2)),
+      };
+      const current = useItineraryStore.getState().mapCamera;
+      if (
+        current &&
+        Math.abs(current.center.lat - next.center.lat) < 0.000001 &&
+        Math.abs(current.center.lng - next.center.lng) < 0.000001 &&
+        Math.abs(current.zoom - next.zoom) < 0.01
+      ) {
+        return;
+      }
+      setMapCamera(next);
+    }, 500);
+  }, [setMapCamera]);
+
+  if (!apiKey || loadError) return <MapPlaceholder />;
 
   if (!isLoaded) {
     return (
@@ -591,10 +577,214 @@ export default function MapView({ onNodeSelect, isLoaded, loadError }: MapViewPr
       zoom={6}
       options={MAP_OPTIONS}
       onClick={handleMapClick}
-      onLoad={(map) => { mapRef.current = map; }}
-      onUnmount={() => { mapRef.current = null; }}
+      onIdle={handleMapIdle}
+      onLoad={(instance) => {
+        mapRef.current = instance;
+        hasHandledInitialIdleRef.current = false;
+        const savedCamera = useItineraryStore.getState().mapCamera;
+        if (savedCamera) {
+          instance.setZoom(savedCamera.zoom);
+          instance.setCenter(savedCamera.center);
+        }
+        setMap(instance);
+      }}
+      onUnmount={() => {
+        if (cameraSaveTimerRef.current) clearTimeout(cameraSaveTimerRef.current);
+        mapRef.current = null;
+        setMap(null);
+      }}
     >
       {/* 동선은 useEffect 안에서 google.maps.Polyline로 직접 관리됨 */}
+
+      {typeof document !== "undefined" && createPortal((
+      <div
+        className="fixed z-[60] flex max-w-[calc(100vw-2rem)] flex-col items-stretch gap-2"
+        style={{ left: areaToolsPosition.x, top: areaToolsPosition.y, width: AREA_TOOLS_WIDTH }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          onPointerDown={startAreaToolsDrag}
+          className="flex h-6 cursor-grab items-center gap-1.5 rounded-sm border border-white/10 bg-[#0d1117]/95 px-2 text-[9px] font-mono tracking-widest text-slate-500 shadow-[0_0_12px_rgba(0,0,0,0.5)] active:cursor-grabbing"
+          title="드래그해서 위치 이동"
+        >
+          <GripVertical className="h-3 w-3 text-slate-600" />
+          지도 구역 도구
+        </div>
+        {areaMode === "idle" ? (
+          <button
+            onClick={() => setAreaMode("draw")}
+            title="영역 일정 그리기"
+            className="inline-flex h-9 w-full items-center justify-start gap-1.5 rounded-sm border border-cyan-400/35 bg-[#0d1117]/95 px-3 text-[11px] font-mono text-cyan-200 shadow-[0_0_14px_rgba(0,0,0,0.6)] transition hover:border-cyan-300 hover:bg-cyan-400/10"
+          >
+            <Pentagon className="h-4 w-4" />
+            <span className="whitespace-nowrap">구역 그리기</span>
+          </button>
+        ) : (
+          <div className="w-full rounded-sm border border-cyan-400/30 bg-[#0d1117]/95 p-2 shadow-[0_0_18px_rgba(0,0,0,0.65)]">
+            <div className="mb-2 flex items-center gap-1.5">
+              <Pentagon className="h-3.5 w-3.5 text-cyan-300" />
+              <span className="text-[10px] font-mono tracking-widest text-cyan-200">
+                {areaMode === "draw" ? `꼭짓점 ${draftVertices.length}` : areaMode === "entry" ? "진입점 선택" : "이탈점 선택"}
+              </span>
+              <button
+                onClick={resetAreaDraft}
+                title="취소"
+                className="ml-auto text-slate-500 transition hover:text-red-300"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {areaMode === "draw" ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setDraftVertices((current) => current.slice(0, -1))}
+                  disabled={draftVertices.length === 0}
+                  className="rounded-sm border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-mono text-slate-400 transition hover:text-white disabled:opacity-30"
+                >
+                  되돌리기
+                </button>
+                <button
+                  onClick={() => setAreaMode("entry")}
+                  disabled={draftVertices.length < 3}
+                  className="rounded-sm border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-[10px] font-mono text-cyan-200 transition hover:border-cyan-300 disabled:opacity-30"
+                >
+                  진입점 찍기
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <input
+                  value={draftAreaName}
+                  onChange={(e) => setDraftAreaName(e.target.value)}
+                  placeholder="구역 이름"
+                  className="w-full rounded-sm border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-mono text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400/40"
+                />
+                <button
+                  onClick={addDraftAreaToTimeline}
+                  disabled={!draftEntryPoint || !draftExitPoint}
+                  title="시간 간트 마지막에 추가"
+                  className="inline-flex items-center justify-center gap-1 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[10px] font-mono text-emerald-200 transition hover:border-emerald-300 disabled:opacity-30"
+                >
+                  <Check className="h-3 w-3" />
+                  일정에 추가
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {mapAreas.length > 0 && (
+          <div className="w-full rounded-sm border border-white/10 bg-[#0d1117]/95 shadow-[0_0_18px_rgba(0,0,0,0.65)]">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-2 py-1.5">
+              <span className="text-[9px] font-mono tracking-widest text-slate-500">지도 구역</span>
+              <span className="text-[9px] font-mono text-slate-600">{mapAreas.length}</span>
+            </div>
+            <div className="max-h-28 overflow-y-auto">
+              {mapAreas.map((area) => (
+                <div key={area.id} className="flex items-center gap-1.5 border-b border-white/[0.04] px-2 py-1.5 last:border-b-0">
+                  <button
+                    onClick={() => {
+                      if (mapRef.current) focusMapPoint(mapRef.current, area.position, 15);
+                    }}
+                    className="min-w-0 flex-1 truncate text-left text-[10px] font-mono text-slate-300 hover:text-cyan-200"
+                    title="구역으로 이동"
+                  >
+                    {area.name}
+                  </button>
+                  <button
+                    onClick={() => toggleMapAreaHidden(area.id)}
+                    title={area.hidden ? "구역 표시" : "구역 숨기기"}
+                    className={cn(
+                      "inline-flex h-6 w-6 items-center justify-center rounded-sm border transition",
+                      area.hidden
+                        ? "border-slate-700 text-slate-600 hover:text-slate-300"
+                        : "border-cyan-400/30 text-cyan-300 hover:bg-cyan-400/10",
+                    )}
+                  >
+                    {area.hidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  </button>
+                  <button
+                    onClick={() => addMapAreaToTimeline(area)}
+                    disabled={activeDayScheduledAreaIds.has(area.id)}
+                    title={activeDayScheduledAreaIds.has(area.id) ? "이미 현재 일자에 있음" : "현재 일자 일정에 추가"}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-sm border border-emerald-400/30 text-emerald-300 transition hover:bg-emerald-400/10 disabled:border-slate-700 disabled:text-slate-700"
+                  >
+                    <CalendarPlus className="h-3 w-3" />
+                  </button>
+                  <button
+                    onClick={() => removeMapArea(area.id)}
+                    title="구역 삭제"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-sm border border-red-500/30 text-red-400 transition hover:bg-red-500/10 hover:text-red-300"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      ), document.body)}
+
+      {draftVertices.map((point, index) => (
+        <OverlayView key={`draft-${index}`} position={point} mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}>
+          <div
+            style={{ transform: "translate(-50%, -50%)" }}
+            className="flex h-5 w-5 items-center justify-center rounded-full border border-cyan-200 bg-cyan-400 text-[9px] font-mono font-bold text-black shadow-[0_0_10px_rgba(34,211,238,0.8)]"
+          >
+            {index + 1}
+          </div>
+        </OverlayView>
+      ))}
+
+      {draftEntryPoint && (
+        <OverlayView position={draftEntryPoint} mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}>
+          <div
+            style={{ transform: "translate(-50%, -100%)" }}
+            className="inline-flex items-center gap-1 rounded-sm border border-emerald-400/50 bg-[#0d1117]/95 px-1.5 py-1 text-[9px] font-mono text-emerald-300"
+          >
+            <MapPin className="h-3 w-3" />
+            IN
+          </div>
+        </OverlayView>
+      )}
+
+      {draftExitPoint && (
+        <OverlayView position={draftExitPoint} mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}>
+          <div
+            style={{ transform: "translate(-50%, -100%)" }}
+            className="inline-flex items-center gap-1 rounded-sm border border-rose-400/50 bg-[#0d1117]/95 px-1.5 py-1 text-[9px] font-mono text-rose-300"
+          >
+            <MapPin className="h-3 w-3" />
+            OUT
+          </div>
+        </OverlayView>
+      )}
+
+      {/* 그룹 이름 라벨 */}
+      {groupLabels.map((label) => (
+        <OverlayView
+          key={label.key}
+          position={label.anchor}
+          mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
+        >
+          <div
+            style={{
+              transform: 'translate(-50%, -50%)',
+              borderColor: label.color,
+              pointerEvents: 'none',
+            }}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#0d1117]/95 border rounded-sm text-[15px] font-mono leading-none whitespace-nowrap shadow-[0_0_12px_rgba(0,0,0,0.7)] font-bold tracking-wide text-white"
+          >
+            <span
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ background: label.color, boxShadow: `0 0 8px ${label.color}` }}
+            />
+            <span>{label.name}</span>
+          </div>
+        </OverlayView>
+      ))}
 
       {/* 일정에 추가된 장소 마커 */}
       {mappedLocations.map((loc) => {
@@ -605,50 +795,126 @@ export default function MapView({ onNodeSelect, isLoaded, loadError }: MapViewPr
             position={loc.position!}
             category={loc.category}
             isSelected={isSelected}
+            order={loc.routeOrder}
             onClick={() => setSelectedLocation({ day: loc.day, locationId: loc.id })}
           />
         );
       })}
 
-      {/* 선택된 마커 위 삭제 버튼 */}
+      {[
+        ...mapAreas
+          .filter((area) => !area.hidden)
+          .flatMap((area) => [
+            { key: `${area.id}:entry`, label: "IN", point: area.entryPoint, color: "emerald" as const },
+            { key: `${area.id}:exit`, label: "OUT", point: area.exitPoint, color: "rose" as const },
+          ]),
+        ...mappedLocations.flatMap((loc) => {
+          if (loc.areaId) return [];
+          return [
+            { key: `${loc.day}:${loc.id}:entry`, label: "IN", point: loc.entryPoint, color: "emerald" as const },
+            { key: `${loc.day}:${loc.id}:exit`, label: "OUT", point: loc.exitPoint, color: "rose" as const },
+          ];
+        }),
+      ].filter((item) => item.point).map((item) => (
+        <OverlayView
+          key={item.key}
+          position={item.point!}
+          mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
+        >
+          <div
+            style={{ transform: "translate(-50%, -100%)" }}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-sm border bg-[#0d1117]/95 px-1.5 py-1 text-[9px] font-mono",
+              item.color === "emerald"
+                ? "border-emerald-400/50 text-emerald-300"
+                : "border-rose-400/50 text-rose-300",
+            )}
+          >
+            <MapPin className="h-3 w-3" />
+            {item.label}
+          </div>
+        </OverlayView>
+      ))}
+
+      {/* 선택된 마커 위 액션 버튼 */}
       {selectedLocation && (() => {
         const sel = mappedLocations.find(
           (l) => l.id === selectedLocation.locationId && l.day === selectedLocation.day
         );
         if (!sel?.position) return null;
+        const isAreaSchedule = Boolean(sel.areaId || sel.shapeVertices);
+        const isBookmarked = !isAreaSchedule && bookmarks.some((b) => b.placeId === sel.id);
         return (
           <OverlayView
             position={sel.position}
             mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
           >
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                removeLocation(selectedLocation.day, selectedLocation.locationId);
-                setSelectedLocation(null);
-              }}
+            <div
+              style={{ transform: 'translate(-50%, calc(-100% - 22px))' }}
+              className="inline-flex flex-col items-center gap-1"
               onMouseDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
-              title="이 장소 삭제"
-              style={{ transform: 'translate(-50%, calc(-100% - 22px))' }}
-              className="flex items-center gap-1 bg-[#0d1117]/95 border border-red-500/40 text-red-400 hover:bg-red-500/15 hover:text-red-300 text-[9px] font-mono px-1.5 py-1 rounded-sm shadow-[0_0_10px_rgba(0,0,0,0.6)] whitespace-nowrap"
             >
-              <Trash2 className="w-2.5 h-2.5" />
-              삭제
-            </button>
+              {!isAreaSchedule && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isBookmarked) {
+                      removeBookmark(sel.id);
+                    } else {
+                      addBookmark({
+                        placeId: sel.id,
+                        name: sel.name,
+                        position: sel.position!,
+                        type: sel.category,
+                      });
+                    }
+                  }}
+                  title={isBookmarked ? "노드 마커에서 제거" : "노드 마커에 추가"}
+                  className={cn(
+                    "inline-flex items-center gap-1 bg-[#0d1117]/95 border text-[9px] font-mono leading-none px-1.5 py-1 rounded-sm shadow-[0_0_10px_rgba(0,0,0,0.6)] whitespace-nowrap transition-colors",
+                    isBookmarked
+                      ? "border-amber-400/50 text-amber-300 hover:bg-amber-500/15"
+                      : "border-amber-400/30 text-amber-400 hover:bg-amber-500/15 hover:text-amber-300"
+                  )}
+                >
+                  {isBookmarked ? (
+                    <BookmarkCheck className="w-2.5 h-2.5 fill-amber-300/20 shrink-0" />
+                  ) : (
+                    <Bookmark className="w-2.5 h-2.5 shrink-0" />
+                  )}
+                  <span>{isBookmarked ? "마커됨" : "마커"}</span>
+                </button>
+              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeLocation(selectedLocation.day, selectedLocation.locationId);
+                  setSelectedLocation(null);
+                }}
+                title={isAreaSchedule ? "일정에서만 제거" : "이 장소 삭제"}
+                className="inline-flex items-center gap-1 bg-[#0d1117]/95 border border-red-500/40 text-red-400 hover:bg-red-500/15 hover:text-red-300 text-[9px] font-mono leading-none px-1.5 py-1 rounded-sm shadow-[0_0_10px_rgba(0,0,0,0.6)] whitespace-nowrap"
+              >
+                <Trash2 className="w-2.5 h-2.5 shrink-0" />
+                <span>{isAreaSchedule ? "일정 제거" : "삭제"}</span>
+              </button>
+            </div>
           </OverlayView>
         );
       })()}
 
       {/* POI 커스텀 팝업 */}
-      {poiPopup && (
+      {activePoiPopup && (
         <OverlayView
-          position={poiPopup.position}
+          position={activePoiPopup.position}
           mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
         >
           <PoiPopup
-            place={poiPopup}
-            onClose={() => setPoiPopup(null)}
+            place={activePoiPopup}
+            onClose={() => {
+              setManualPoiPopup(null);
+              setSearchTarget(null);
+            }}
           />
         </OverlayView>
       )}

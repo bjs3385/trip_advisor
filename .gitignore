@@ -41,6 +41,7 @@ frontend/.env.local
 # OS
 .DS_Store
 Thumbs.db
+.codex
 
 # Node.js (frontend)
 node_modules/
